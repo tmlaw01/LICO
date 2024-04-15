@@ -40,18 +40,19 @@ Sponsor: This code is based upon work supported by the U.S. Department of Energy
 #ifndef repetition_elimination_host
 #define repetition_elimination_host
 
+#include "h_Common_Defines.h"
 
 template <typename T, bool check = false>
-static inline bool h_REencode(const T* const in, const int insize, T* const dataout, int& datasize, T* const bmout)  // all sizes in number of words
+static inline bool h_REencode(const T* const in, const int32_t insize, T* const dataout, int32_t& datasize, T* const bmout)  // all sizes in number of words
 {
-  const int bits = sizeof(T) * 8;  // bits per word
-  const int num = (insize + bits - 1) / bits;  // number of subchunks (rounded up)
-  int pos = 0;
-  int cnt = 0;
+  const int32_t bits = sizeof(T) * 8;  // bits per word
+  const int32_t num = (insize + bits - 1) / bits;  // number of subchunks (rounded up)
+  int32_t pos = 0;
+  int32_t cnt = 0;
   T prev = ~in[0];
-  for (int i = 0; i < num - 1; i++) {
+  for (int32_t i = 0; i < num - 1; i++) {
     T bm = 0;
-    for (int j = 0; j < bits; j++) {
+    for (int32_t j = 0; j < bits; j++) {
       const T val = in[cnt++];
       if (val != prev) {
         if constexpr (check) {
@@ -64,10 +65,10 @@ static inline bool h_REencode(const T* const in, const int insize, T* const data
     }
     bmout[i] = bm;
   }
-  const int i = num - 1;
+  const int32_t i = num - 1;
   {
     T bm = 0;
-    for (int j = 0; j < bits; j++) {
+    for (int32_t j = 0; j < bits; j++) {
       if (cnt >= insize) break;
       const T val = in[cnt++];
       if (val != prev) {
@@ -87,26 +88,26 @@ static inline bool h_REencode(const T* const in, const int insize, T* const data
 
 
 template <typename T>
-static inline void h_REdecode(const int decsize, const T* const datain, const T* const bmin, T* const out)  // all sizes in number of words
+static inline void h_REdecode(const int32_t decsize, const T* const datain, const T* const bmin, T* const out)  // all sizes in number of words
 {
-  const int bits = sizeof(T) * 8;  // bits per word
-  const int num = (decsize + bits - 1) / bits;  // number of subchunks (rounded up)
-  int pos = 0;
-  int cnt = 0;
+  const int32_t bits = sizeof(T) * 8;  // bits per word
+  const int32_t num = (decsize + bits - 1) / bits;  // number of subchunks (rounded up)
+  int32_t pos = 0;
+  int32_t cnt = 0;
   T val = 0;  // init not needed, just to avoid warning
-  for (int i = 0; i < num - 1; i++) {
+  for (int32_t i = 0; i < num - 1; i++) {
     const T bm = bmin[i];
-    for (int j = 0; j < bits; j++) {
+    for (int32_t j = 0; j < bits; j++) {
       if (((bm >> j) & 1) != 0) {
         val = datain[pos++];
       }
       out[cnt++] = val;
     }
   }
-  const int i = num - 1;
+  const int32_t i = num - 1;
   {
     const T bm = bmin[i];
-    for (int j = 0; j < bits; j++) {
+    for (int32_t j = 0; j < bits; j++) {
       if (((bm >> j) & 1) != 0) {
         val = datain[pos++];
       }

@@ -40,35 +40,36 @@ Sponsor: This code is based upon work supported by the U.S. Department of Energy
 #ifndef zero_elimination_4
 #define zero_elimination_4
 
+#include "h_Common_Defines.h"
 
 #include "h_zero_elimination.h"
 #include "h_repetition_elimination.h"
 
 
-static inline bool h_ZERE_4(int& csize, byte in [CS], byte out [CS])
+static inline bool h_ZERE_4(int32_t& csize, byte in [CS], byte out [CS])
 {
-  using type = unsigned int;
-  const int bits = sizeof(type) * 8;
+  using type = uint32_t;
+  const int32_t bits = sizeof(type) * 8;
   const type* const in_t = (type*)in;  // type cast
   type* const out_t = (type*)out;  // type cast
-  const int num = (csize / sizeof(type) + bits - 1) / bits;  // number of subchunks (rounded up)
-  const int extra = csize % sizeof(type);
+  const int32_t num = (csize / sizeof(type) + bits - 1) / bits;  // number of subchunks (rounded up)
+  const int32_t extra = csize % sizeof(type);
   type bitmap [CS / sizeof(type) / bits];
 
   // compute bitmap and copy non-zero values
-  int pos;
+  int32_t pos;
   h_ZEencode(in_t, csize / sizeof(type), out_t, pos, bitmap);
   pos *= sizeof(type);
 
   // compress bitmap
-  const int numb = (num * sizeof(type) + 8 - 1) / 8;  // number of subchunks (rounded up)
-  int loc = CS - 4 - extra - (pos + numb);
+  const int32_t numb = (num * sizeof(type) + 8 - 1) / 8;  // number of subchunks (rounded up)
+  int32_t loc = CS - 4 - extra - (pos + numb);
   if (loc <= 0) return false;
   if (!h_REencode<byte, true>((byte*)bitmap, num * sizeof(type), &out[pos + numb], loc, &out[pos])) return false;
   loc += pos + numb;
 
   // copy leftover bytes at end
-  for (int i = 0; i < extra; i++) {
+  for (int32_t i = 0; i < extra; i++) {
     out[loc++] = in[csize - extra + i];
   }
 
@@ -85,29 +86,29 @@ static inline bool h_ZERE_4(int& csize, byte in [CS], byte out [CS])
 }
 
 
-static inline void h_iZERE_4(int& csize, byte in [CS], byte out [CS])
+static inline void h_iZERE_4(int32_t& csize, byte in [CS], byte out [CS])
 {
   // get csize
-  using type = unsigned int;
-  const int bits = sizeof(type) * 8;
+  using type = uint32_t;
+  const int32_t bits = sizeof(type) * 8;
   const type* const in_t = (type*)in;  // type cast
   type* const out_t = (type*)out;
-  const int old = csize;
-  const int pos = (((int)in[csize - 3]) << 8) | in[csize - 4];
-  csize = (((int)in[csize - 1]) << 8) | in[csize - 2];
-  const int extra = csize % sizeof(type);  // extra bytes at end
+  const int32_t old = csize;
+  const int32_t pos = (((int32_t)in[csize - 3]) << 8) | in[csize - 4];
+  csize = (((int32_t)in[csize - 1]) << 8) | in[csize - 2];
+  const int32_t extra = csize % sizeof(type);  // extra bytes at end
   type bitmap [CS / sizeof(type) / bits];
 
   // decompress bitmap
-  const int num = (csize / sizeof(type) + bits - 1) / bits;  // number of subchunks (rounded up)
-  const int numb = (num * sizeof(type) + 8 - 1) / 8;  // number of subchunks (rounded up)
+  const int32_t num = (csize / sizeof(type) + bits - 1) / bits;  // number of subchunks (rounded up)
+  const int32_t numb = (num * sizeof(type) + 8 - 1) / 8;  // number of subchunks (rounded up)
   h_REdecode(num * sizeof(type), &in[pos + numb], &in[pos], (byte*)bitmap);
 
   // copy non-zero values based on bitmap
   h_ZEdecode(csize / sizeof(type), in_t, bitmap, out_t);
 
   // copy leftover bytes
-  for (int i = 0; i < extra; i++) {
+  for (int32_t i = 0; i < extra; i++) {
     out[csize - extra + i] = in[old - 4 - extra + i];
   }
 }

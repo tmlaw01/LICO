@@ -36,52 +36,20 @@ Noushin Azami, Rain Lawson, and Martin Burtscher. "LICO: An Effective, High-Spee
 Sponsor: This code is based upon work supported by the U.S. Department of Energy, Office of Science, Office of Advanced Scientific Research (ASCR), under contract DE-SC0022223.
 */
 
-
 #define NDEBUG
 
-using byte = unsigned char;
+#include "../include/h_Common.h"
+#include "../include/h_CPUTimer.h"
 
-static const int CS = 1024 * 16;  // chunk size (in bytes) [must be multiple of 8]
-
-#include <cstdlib>
-#include <cstdio>
-#include <cstring>
-#include <cassert>
-#include <algorithm>
-#include <sys/time.h>
-#include "include/h_BMP_BIT.h"
-#include "include/h_ZERE_1.h"
-#include "include/h_ZERE_4.h"
-
-
-struct CPUTimer
+static void h_encode(const byte* const __restrict__ input, const int insize, byte* const __restrict__ output, int& outsize)
 {
-  timeval beg, end;
-  CPUTimer() {}
-  ~CPUTimer() {}
-  void start() {gettimeofday(&beg, NULL);}
-  double stop() {gettimeofday(&end, NULL); return end.tv_sec - beg.tv_sec + (end.tv_usec - beg.tv_usec) / 1000000.0;}
-};
-
-
-static void h_decode(const byte* const __restrict__ input, byte* const __restrict__ output, int& outsize)
-{
-  // input header
-  int* const head_in = (int*)input;
-  outsize = head_in[0];
-
   // initialize
-  const int chunks = (outsize + CS - 1) / CS;  // round up
-  unsigned short* const size_in = (unsigned short*)&head_in[1];
-  byte* const data_in = (byte*)&size_in[chunks];
-  int* const start = new int [chunks];
-
-  // convert chunk sizes into starting positions
-  int pfs = 0;
-  for (int chunkID = 0; chunkID < chunks; chunkID++) {
-    start[chunkID] = pfs;
-    pfs += (int)size_in[chunkID];
-  }
+  const int chunks = (insize + CS - 1) / CS;  // round up
+  int* const head_out = (int*)output;
+  unsigned short* const size_out = (unsigned short*)&head_out[1];
+  byte* const data_out = (byte*)&size_out[chunks];
+  int* const carry = new int [chunks];
+  memset(carry, 0, chunks * sizeof(int));
 
   // process chunks in parallel
   #pragma omp parallel for schedule(dynamic, 1)
@@ -92,48 +60,64 @@ static void h_decode(const byte* const __restrict__ input, byte* const __restric
     byte* in = (byte*)chunk1;
     byte* out = (byte*)chunk2;
     const int base = chunkID * CS;
-    const int osize = std::min(CS, outsize - base);
-    int csize = size_in[chunkID];
-    if (csize == osize) {
-      // simply copy
-      memcpy(&output[base], &data_in[start[chunkID]], osize);
+    const int osize = std::min(CS, insize - base);
+    memcpy(out, &input[base], osize);
+    
+    // encode chunk
+    int csize = osize;
+    bool good = h_ZERE_4(csize, out, in);
+    if (good) {
+      good = h_ZERE_1(csize, in, out);
+    }
+        
+    int offs = 0;
+    if (chunkID > 0) {
+      do {
+        #pragma omp atomic read
+        offs = carry[chunkID - 1];
+      } while (offs == 0);
+      #pragma omp flush
+    }
+    if (good && (csize < osize)) {
+      // store compressed data
+      #pragma omp atomic write
+      carry[chunkID] = offs + csize;
+      size_out[chunkID] = csize;
+      memcpy(&data_out[offs], out, csize);
     } else {
-      // decompress
-      memcpy(out, &data_in[start[chunkID]], csize);
-
-      // decode
-      h_iZERE_1(csize, out, in);
-      h_iZERE_4(csize, in, out);
-
-      if (csize != osize) {fprintf(stderr, "ERROR: csize %d does not match osize %d\n\n", csize, osize); exit(-1);}
-      memcpy(&output[base], out, csize);
+      // store original data
+      #pragma omp atomic write
+      carry[chunkID] = offs + osize;
+      size_out[chunkID] = osize;
+      memcpy(&data_out[offs], &input[base], osize);
     }
   }
 
-  delete [] start;
+  // output header
+  head_out[0] = insize;
+
+  // finish
+  outsize = &data_out[carry[chunks - 1]] - output;
+  delete [] carry;
 }
 
 
 int main(int argc, char* argv [])
 {
-  printf("LICO decompressor 1.0\n");
+  printf("LICO compressor 1.0\n");
   printf("Copyright 2023 Texas State University\n\n");
 
   // read input from file
-  if (argc < 3) {printf("USAGE: %s compressed_file_name decompressed_file_name [performance_analysis (y)]\n\n", argv[0]);  exit(-1);}
-
-  // read input file
-  FILE* const fin = fopen(argv[1], "rb");
-  int pre_size = 0;
-  const int pre_val = fread(&pre_size, sizeof(pre_size), 1, fin); assert(pre_val == sizeof(pre_size));
+  if (argc < 3) {printf("USAGE: %s input_file_name compressed_file_name [performance_analysis(y)]\n\n", argv[0]);  exit(-1);}
+  FILE* const fin = fopen(argv[1], "rb");  
   fseek(fin, 0, SEEK_END);
-  const int hencsize = ftell(fin);  assert(hencsize > 0);
-  byte* const hencoded = new byte [pre_size];
+  const int fsize = ftell(fin);  assert(fsize > 0);
+  byte* const input = new byte [fsize];
   fseek(fin, 0, SEEK_SET);
-  const int insize = fread(hencoded, 1, hencsize, fin);  assert(insize == hencsize);
+  const int insize = fread(input, 1, fsize, fin);  assert(insize == fsize);
   fclose(fin);
-  printf("encoded size: %d bytes\n", insize);
-
+  printf("original size: %d bytes\n", insize);
+ 
   // check if third argument is "y" to enable performance analysis
   char* perf_str = argv[3];
   bool perf = false;
@@ -145,31 +129,36 @@ int main(int argc, char* argv [])
   }
 
   // allocate CPU memory
-  byte* hdecoded = new byte [pre_size];
-  int hdecsize = 0;
+  const int chunks = (insize + CS - 1) / CS;  // round up
+  const int maxsize = 3 * sizeof(int) + chunks * sizeof(short) + chunks * CS;
+  byte* const hencoded = new byte [maxsize];
+  int hencsize = 0; 
 
-  // time CPU decoding
+  // time CPU preprocessor encoding
+  byte* hpreencdata = new byte [insize];
+  std::copy(input, input + insize, hpreencdata);
+  int hpreencsize = insize;
   CPUTimer htimer;
   htimer.start();
-  h_decode(hencoded, hdecoded, hdecsize);
-  h_iBMP_BIT(hdecsize, hdecoded);
+  h_BMP_BIT(hpreencsize, hpreencdata);
+  h_encode(hpreencdata, hpreencsize, hencoded, hencsize);
   double hruntime = htimer.stop();
 
-  printf("decoded size: %d bytes\n", hdecsize);
-  const float CR = (100.0 * insize) / hdecsize;
-  printf("ratio: %6.2f%% %7.3fx\n", CR, 100.0 / CR);
+  printf("encoded size: %d bytes\n", hencsize); 
+  const float CR = (100.0 * hencsize) / insize;
+  printf("ratio: %6.2f%% %7.3fx\n", CR, 100.0 / CR);  
   if (perf) {
-    printf("decoding time: %.6f s\n", hruntime);
-    double hthroughput = hdecsize * 0.000000001 / hruntime;
-    printf("decoding throughput: %8.3f gigabytes/s\n", hthroughput);
+    printf("encoding time: %.6f s\n", hruntime);
+    double hthroughput = insize * 1.0E-9 / hruntime;
+    printf("encoding throughput: %8.3f gigabytes/s\n", hthroughput);
   }
 
   // write to file
   FILE* const fout = fopen(argv[2], "wb");
-  fwrite(hdecoded, 1, hdecsize, fout);
+  fwrite(hencoded, 1, hencsize, fout);
   fclose(fout);
 
+  delete [] input;
   delete [] hencoded;
-  delete [] hdecoded;
-  return 0;
+  return 0; 
 }
